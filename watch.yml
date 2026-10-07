@@ -1,0 +1,37 @@
+name: Watch Ticketmaster
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # every 5 minutes (GitHub may delay a few minutes)
+  workflow_dispatch:
+    inputs:
+      test_message:
+        description: "Send a test WhatsApp message only"
+        default: "0"
+
+permissions:
+  contents: write
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run bot
+        env:
+          TM_API_KEY: ${{ secrets.TM_API_KEY }}
+          CALLMEBOT_PHONE: ${{ secrets.CALLMEBOT_PHONE }}
+          CALLMEBOT_KEY: ${{ secrets.CALLMEBOT_KEY }}
+          COUNTRY_CODE: ${{ vars.COUNTRY_CODE }}
+          CITY: ${{ vars.CITY }}
+          SHOW_DATE: ${{ vars.SHOW_DATE }}
+          TEST_MESSAGE: ${{ github.event.inputs.test_message }}
+        run: python bot.py
+
+      - name: Save state
+        run: |
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add state.json || true
+          git diff --cached --quiet || (git commit -m "update state" && git push)
