@@ -1,11 +1,14 @@
 {
- "Z698xZ05Z1kbI1A_6": {
-  "date": "2026-12-12",
-  "keywords": [],
-  "name": "J. Cole: The Fall-Off Tour",
-  "prices": [],
-  "status": "onsale",
-  "url": "https://www.ticketmaster.co.za/event/j-cole-the-fall-off-tour-tickets/628285647",
-  "venue": "FNB Stadium"
- }
+ "events": {
+  "Z698xZ05Z1kbI1A_6": {
+   "date": "2026-12-12",
+   "keywords": [],
+   "name": "J. Cole: The Fall-Off Tour",
+   "prices": [],
+   "status": "onsale",
+   "url": "https://www.ticketmaster.co.za/event/j-cole-the-fall-off-tour-tickets/628285647",
+   "venue": "FNB Stadium"
+  }
+ },
+ "last_message": 1791359476.9813466
 }
