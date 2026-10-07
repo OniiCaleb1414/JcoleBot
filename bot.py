@@ -6,6 +6,7 @@ repository secrets, see README.md.
 import json
 import os
 import sys
+import time
 import urllib.parse
 import urllib.request
 
@@ -13,21 +14,26 @@ TM_API_KEY = os.environ["TM_API_KEY"]
 PHONE = os.environ["CALLMEBOT_PHONE"]        # e.g. +27821234567
 CM_KEY = os.environ["CALLMEBOT_KEY"]
 
-KEYWORD = os.environ.get("ARTIST", "J. Cole")
-COUNTRY = os.environ.get("COUNTRY_CODE", "US")   # ISO code, e.g. US, GB, CA
-CITY = os.environ.get("CITY", "")                # optional, e.g. Atlanta
-DATE = os.environ.get("SHOW_DATE", "")           # optional YYYY-MM-DD
-WANTED = [w.strip().lower() for w in os.environ.get(
-    "WANTED_WORDS", "standing,general admission,ga,floor,pit").split(",")]
+KEYWORD = os.environ.get("ARTIST") or "J. Cole"
+COUNTRY = os.environ.get("COUNTRY_CODE") or "ZA"
+CITY = os.environ.get("CITY") or ""
+DATE = os.environ.get("SHOW_DATE") or ""
+WANTED = [w.strip().lower() for w in (os.environ.get("WANTED_WORDS") or
+          "standing,general admission,ga,floor,pit").split(",")]
+HEARTBEAT_HOURS = float(os.environ.get("HEARTBEAT_HOURS") or 24)
 
 STATE_FILE = "state.json"
+sent_any = False
 
 
 def whatsapp(text):
+    global sent_any
     url = ("https://api.callmebot.com/whatsapp.php?"
            + urllib.parse.urlencode({"phone": PHONE, "text": text, "apikey": CM_KEY}))
     with urllib.request.urlopen(url, timeout=30) as r:
         print("WhatsApp response:", r.status)
+    sent_any = True
+    time.sleep(3)  # be gentle with CallMeBot's rate limit
 
 
 def fetch_events():
@@ -55,10 +61,27 @@ def snapshot(ev):
         "date": ev.get("dates", {}).get("start", {}).get("localDate", "?"),
         "venue": venue,
         "status": ev.get("dates", {}).get("status", {}).get("code", "?"),
-        "prices": [f'{p.get("type")}:{p.get("min")}-{p.get("max")}' for p in prices],
+        "prices": [f'{p.get("type")}: {p.get("currency", "")} {p.get("min")}-{p.get("max")}'
+                   for p in prices],
         "keywords": found,
         "url": ev.get("url"),
     }
+
+
+def details(s):
+    price = "; ".join(s["prices"]) if s["prices"] else "no price info"
+    return f"Status: {s['status']}\nPrices: {price}\n{s['url']}"
+
+
+def load_state():
+    try:
+        with open(STATE_FILE) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}, 0
+    if "events" in data:                      # current format
+        return data["events"], data.get("last_message", 0)
+    return data, 0                            # older format
 
 
 def main():
@@ -66,40 +89,46 @@ def main():
         whatsapp("Test OK: your J. Cole ticket bot can reach your WhatsApp.")
         return
 
-    try:
-        with open(STATE_FILE) as f:
-            old = json.load(f)
-    except FileNotFoundError:
-        old = {}
+    old, last_message = load_state()
+    first_run = not old
+    new, alerts = {}, []
 
-    new = {}
-    alerts = []
     for ev in fetch_events():
         s = snapshot(ev)
         new[ev["id"]] = s
         prev = old.get(ev["id"])
         label = f'{s["name"]} - {s["venue"]} - {s["date"]}'
         if prev is None:
-            alerts.append(f"NEW LISTING: {label}\nStatus: {s['status']}\n{s['url']}")
-        else:
-            if s["status"] == "onsale" and prev["status"] != "onsale":
-                alerts.append(f"TICKETS ON SALE: {label}\n{s['url']}")
-            if s["keywords"] != prev["keywords"] and s["keywords"]:
-                alerts.append(f"Standing/GA hint ({', '.join(s['keywords'])}): {label}\n{s['url']}")
-            if s["prices"] != prev["prices"] and s["status"] == "onsale":
-                alerts.append(f"Ticket prices changed: {label}\n{s['url']}")
+            alerts.append(f"NEW LISTING: {label}\n{details(s)}")
+            continue
+        if s["status"] == "onsale" and prev["status"] != "onsale":
+            alerts.append(f"TICKETS ON SALE: {label}\n{details(s)}")
+        elif s["status"] != prev["status"]:
+            alerts.append(f"STATUS CHANGED {prev['status']} -> {s['status']}: {label}\n{details(s)}")
+        if s["keywords"] and s["keywords"] != prev["keywords"]:
+            alerts.append(f"STANDING/GA HINT ({', '.join(s['keywords'])}): {label}\n{details(s)}")
+        if s["prices"] != prev["prices"]:
+            alerts.append(f"PRICES CHANGED: {label}\nWas: {'; '.join(prev['prices']) or 'none'}\n{details(s)}")
 
-    if not new and not old:
+    if first_run and not new:
         alerts.append(f"Bot is running but found 0 events for '{KEYWORD}' "
-                      f"({COUNTRY} {CITY} {DATE}). Ticketmaster's API may not "
-                      "cover this show, or the settings need a tweak.")
+                      f"({COUNTRY} {CITY} {DATE}). Check your settings.")
 
     for a in alerts:
         whatsapp(a)
-    print(f"{len(new)} events watched, {len(alerts)} alerts sent")
 
+    # Daily "still alive" message when nothing else was sent
+    hours_quiet = (time.time() - last_message) / 3600
+    if not sent_any and hours_quiet >= HEARTBEAT_HOURS:
+        lines = [f'{s["name"]} ({s["date"]}): {s["status"]}' for s in new.values()]
+        whatsapp("Still watching, nothing new in the last "
+                 f"{int(HEARTBEAT_HOURS)}h.\n" + ("\n".join(lines) or "No events found."))
+
+    print(f"{len(new)} events watched, {len(alerts)} alerts sent")
     with open(STATE_FILE, "w") as f:
-        json.dump(new, f, indent=1, sort_keys=True)
+        json.dump({"events": new,
+                   "last_message": time.time() if sent_any else last_message},
+                  f, indent=1, sort_keys=True)
 
 
 if __name__ == "__main__":
